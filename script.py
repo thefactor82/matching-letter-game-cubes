@@ -105,7 +105,10 @@ if __name__ == '__main__':
     # Filtra le parole valide
     parole_valide = sorted(word for word in combinazioni if word in italian_words)
 
-    # Stampa le parole trovate e il numero totale
-    print(f"\nParole di {lunghezza_parola} lettere trovate ({len(parole_valide)} in totale):")
-    for parola in parole_valide:
-        print(parola)
+    # Scrivi le parole trovate in un file con nome dinamico
+    file_name = f"parole_{lunghezza_parola}_lettere.txt"
+    with open(file_name, "w") as f:
+        for parola in parole_valide:
+            f.write(parola + "\n")
+
+    print(f"\nLe parole valide sono state salvate nel file '{file_name}'.")

@@ -1,6 +1,7 @@
 import time
-from itertools import product, permutations
+from itertools import product, permutations, islice
 from multiprocessing import Pool, cpu_count, Manager
+from math import ceil
 from tqdm import tqdm
 
 # Funzione per caricare il dizionario italiano
@@ -13,8 +14,7 @@ def carica_dizionario(file_path):
         exit(1)
 
 # Funzione per calcolare combinazioni da un batch di permutazioni
-def calcola_combinazioni_batch(args):
-    batch, batch_index = args
+def calcola_combinazioni_batch(batch):
     combinazioni = set()
     for permutazione in batch:
         combinazioni.update(''.join(combo) for combo in product(*permutazione))
@@ -29,12 +29,22 @@ def aggiorna_progresso(queue, total):
                 break
             pbar.update(aggiornamento)
 
+# Funzione per generare i batch come un generatore
+def genera_batches(permutazioni, batch_size):
+    iterator = iter(permutazioni)
+    while True:
+        batch = list(islice(iterator, batch_size))
+        if not batch:
+            break
+        yield batch
+
 # Funzione per parallelizzare la generazione delle combinazioni
 def genera_combinazioni_con_permutazioni_parallel(cubi, n):
     combinazioni = set()
-    permutazioni = list(permutations(cubi, n))
-    batch_size = max(1, len(permutazioni) // (cpu_count() * 4))  # Dividi in batch proporzionati
-    batches = [permutazioni[i:i + batch_size] for i in range(0, len(permutazioni), batch_size)]
+    permutazioni = permutations(cubi, n)  # Generatore di permutazioni
+    num_permutazioni = sum(1 for _ in permutations(cubi, n))  # Calcolo totale permutazioni
+    batch_size = max(1, num_permutazioni // (cpu_count() * 4))  # Dividi in batch proporzionati
+    batches = genera_batches(permutazioni, batch_size)  # Generatore per i batch
 
     # Usa una coda per gestire il progresso
     manager = Manager()
@@ -42,13 +52,11 @@ def genera_combinazioni_con_permutazioni_parallel(cubi, n):
     
     # Processo per la barra di progresso
     from multiprocessing import Process
-    progresso = Process(target=aggiorna_progresso, args=(progress_queue, len(batches)))
+    progresso = Process(target=aggiorna_progresso, args=(progress_queue, ceil(num_permutazioni / batch_size)))
     progresso.start()
 
-    args = [(batch, i) for i, batch in enumerate(batches)]
-    
     with Pool(processes=cpu_count()) as pool:
-        for risultato in pool.imap_unordered(calcola_combinazioni_batch, args):
+        for risultato in pool.imap_unordered(calcola_combinazioni_batch, batches):  # Iteriamo su batch generato
             combinazioni.update(risultato)
             progress_queue.put(1)  # Invia aggiornamenti per la barra
 

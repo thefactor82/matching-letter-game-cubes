@@ -1,7 +1,6 @@
 import time
-from itertools import product, permutations, islice
+from itertools import permutations, product
 from multiprocessing import Pool, cpu_count, Manager
-from math import ceil
 from tqdm import tqdm
 
 # Funzione per caricare il dizionario italiano
@@ -14,13 +13,20 @@ def carica_dizionario(file_path):
         exit(1)
 
 # Funzione per calcolare combinazioni da un batch di permutazioni
-def calcola_combinazioni_batch(batch):
-    combinazioni = set()
+def calcola_combinazioni_batch(args):
+    batch, file_path = args
+    risultati_batch = set()  # Usa un set per rimuovere duplicati
     for permutazione in batch:
-        combinazioni.update(''.join(combo) for combo in product(*permutazione))
-    return combinazioni
+        for combo in product(*permutazione):
+            risultati_batch.add(''.join(combo))
 
-# Funzione per aggiornare la barra di progresso
+    if risultati_batch:
+        # Scrivi solo combinazioni uniche nel file
+        with open(file_path, 'a') as f:
+            f.write('\n'.join(risultati_batch) + '\n')
+    return len(risultati_batch)
+
+# Funzione per gestire la barra di progresso
 def aggiorna_progresso(queue, total):
     with tqdm(total=total, desc="Generazione combinazioni", unit="batch") as pbar:
         while True:
@@ -29,40 +35,29 @@ def aggiorna_progresso(queue, total):
                 break
             pbar.update(aggiornamento)
 
-# Funzione per generare i batch come un generatore
-def genera_batches(permutazioni, batch_size):
-    iterator = iter(permutazioni)
-    while True:
-        batch = list(islice(iterator, batch_size))
-        if not batch:
-            break
-        yield batch
-
 # Funzione per parallelizzare la generazione delle combinazioni
-def genera_combinazioni_con_permutazioni_parallel(cubi, n):
-    combinazioni = set()
-    permutazioni = permutations(cubi, n)  # Generatore di permutazioni
-    num_permutazioni = sum(1 for _ in permutations(cubi, n))  # Calcolo totale permutazioni
-    batch_size = max(1, num_permutazioni // (cpu_count() * 4))  # Dividi in batch proporzionati
-    batches = genera_batches(permutazioni, batch_size)  # Generatore per i batch
+def genera_combinazioni_con_permutazioni_parallel(cubi, n, output_file):
+    permutazioni = list(permutations(cubi, n))  # Convertiamo in lista per prevenire consumo accidentale
+    batch_size = max(1, len(permutazioni) // (cpu_count() * 4))
+    batches = [permutazioni[i:i + batch_size] for i in range(0, len(permutazioni), batch_size)]
 
-    # Usa una coda per gestire il progresso
+    # Coda per la barra di progresso
     manager = Manager()
     progress_queue = manager.Queue()
-    
-    # Processo per la barra di progresso
+
+    # Barra di progresso in un processo separato
     from multiprocessing import Process
-    progresso = Process(target=aggiorna_progresso, args=(progress_queue, ceil(num_permutazioni / batch_size)))
+    progresso = Process(target=aggiorna_progresso, args=(progress_queue, len(batches)))
     progresso.start()
 
-    with Pool(processes=cpu_count()) as pool:
-        for risultato in pool.imap_unordered(calcola_combinazioni_batch, batches):  # Iteriamo su batch generato
-            combinazioni.update(risultato)
-            progress_queue.put(1)  # Invia aggiornamenti per la barra
+    args = [(batch, output_file) for batch in batches]
 
-    progress_queue.put(None)  # Segnale di fine per la barra di progresso
-    progresso.join()  # Attendi la chiusura della barra
-    return combinazioni
+    with Pool(processes=cpu_count()) as pool:
+        for risultato in pool.imap_unordered(calcola_combinazioni_batch, args):
+            progress_queue.put(1)  # Invia aggiornamenti alla barra di progresso
+
+    progress_queue.put(None)
+    progresso.join()
 
 if __name__ == '__main__':
     # Lettere disponibili sui cubi
@@ -93,22 +88,35 @@ if __name__ == '__main__':
     else:
         cubi = cubi_base
 
+    # File di output
+    output_file = f"parole_{lunghezza_parola}_lettere.txt"
+
+    # Cancella il file di output esistente
+    with open(output_file, 'w') as f:
+        pass
+
     # Misura il tempo di esecuzione
     print("Elaborazione in corso...")
     start_time = time.time()
 
-    combinazioni = genera_combinazioni_con_permutazioni_parallel(cubi, lunghezza_parola)
+    genera_combinazioni_con_permutazioni_parallel(cubi, lunghezza_parola, output_file)
 
     elapsed_time = time.time() - start_time
     print(f"Tempo totale: {elapsed_time:.2f} secondi")
 
+    print("Rimozione duplicati...")
+    with open(output_file, 'r') as f:
+        combinazioni_uniche = set(line.strip() for line in f)
+
     # Filtra le parole valide
-    parole_valide = sorted(word for word in combinazioni if word in italian_words)
+    print(f"Filtraggio delle parole valide in corso...")
+    parole_valide = sorted(word for word in combinazioni_uniche if word in italian_words)
 
-    # Scrivi le parole trovate in un file con nome dinamico
-    file_name = f"parole_{lunghezza_parola}_lettere.txt"
-    with open(file_name, "w") as f:
-        for parola in parole_valide:
-            f.write(parola + "\n")
+    print(f"Combinazioni generate: {len(combinazioni_uniche)}")
 
-    print(f"\nLe parole valide sono state salvate nel file '{file_name}'.")
+    # Salva le parole valide su file
+    valid_file = f"parole_valide_{lunghezza_parola}_lettere.txt"
+    with open(valid_file, 'w') as f:
+        f.write('\n'.join(parole_valide))
+
+    print(f"Parole valide salvate in '{valid_file}' ({len(parole_valide)} in totale).")
